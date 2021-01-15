@@ -21,9 +21,14 @@ import time
 
 import tensorflow as tf
 
+from pathlib import Path
+
 from kglib.kgcn.learn.feed import create_placeholders, create_feed_dict, make_all_runnable_in_session
 from kglib.kgcn.learn.loss import loss_ops_preexisting_no_penalty
 from kglib.kgcn.learn.metrics import existence_accuracy
+
+from graph_nets import utils_np
+from graph_nets.graphs import GraphsTuple
 
 
 class KGCNLearner:
@@ -31,11 +36,15 @@ class KGCNLearner:
     Responsible for running a KGCN model
     """
     def __init__(self, model, num_processing_steps_tr=10, num_processing_steps_ge=10):
+        """Args:
+            save_fle: Name to save the trained model to.
+            reload_fle: Name to load saved model from, when doing inference.
+        """
         self._model = model
         self._num_processing_steps_tr = num_processing_steps_tr
         self._num_processing_steps_ge = num_processing_steps_ge
 
-    def __call__(self,
+    def train(self,
                  tr_input_graphs,
                  tr_target_graphs,
                  ge_input_graphs,
@@ -43,7 +52,8 @@ class KGCNLearner:
                  num_training_iterations=1000,
                  learning_rate=1e-3,
                  log_every_epochs=20,
-                 log_dir=None):
+                 log_dir=None,
+                 save_file='save_model.txt'):
         """
         Args:
             tr_graphs: In-memory graphs of Grakn concepts for training
@@ -57,7 +67,7 @@ class KGCNLearner:
         Returns:
 
         """
-
+        save_fle = Path(save_file)
         tf.set_random_seed(1)
 
         input_ph, target_ph = create_placeholders(tr_input_graphs, tr_target_graphs)
@@ -102,6 +112,7 @@ class KGCNLearner:
             train_writer = tf.summary.FileWriter(log_dir, sess.graph)
 
         sess.run(tf.global_variables_initializer())
+        model_saver = tf.train.Saver()
 
         logged_iterations = []
         losses_tr = []
@@ -171,6 +182,51 @@ class KGCNLearner:
                         "outputs": output_ops_tr
                     },
                     feed_dict=feed_dict)
+                
+        # Train the model and save it in the end
+        if not save_fle.is_dir():
+            model_saver.save(sess, save_fle.as_posix())
+            tf.train.write_graph(sess.graph.as_graph_def(), logdir=save_fle.parent.as_posix(), name=save_fle.with_suffix('.pbtxt').as_posix(), as_text=True)
 
         training_info = logged_iterations, losses_tr, losses_ge, corrects_tr, corrects_ge, solveds_tr, solveds_ge
         return train_values, test_values, training_info
+    
+    # New function to infer / apply without training
+    # Inspired from: https://medium.com/@prasadpal107/saving-freezing-optimizing-for-inference-restoring-of-tensorflow-models-b4146deb21b5
+    def infer(self, input_graphs, target_graphs, log_dir, load_file):
+
+        reload_file = Path(load_file)
+
+        input_ph, target_ph = create_placeholders(input_graphs, target_graphs)
+        input_ph, target_ph = make_all_runnable_in_session(input_ph, target_ph)
+        output_ops_ge = self._model(input_ph, self._num_processing_steps_ge)
+        saver = tf.train.import_meta_graph(reload_file.as_posix() + '.meta')
+        
+        sess = tf.Session()
+        sess.run(tf.global_variables_initializer())
+        tf.reset_default_graph()
+        with sess.as_default():
+            if not reload_file.is_dir():
+                saver.restore(sess, reload_file.as_posix())
+            else:
+                print("no file found, restoring failed")
+            
+            input_graphs_tuple = utils_np.networkxs_to_graphs_tuple(input_graphs)
+            target_graphs_tuple = utils_np.networkxs_to_graphs_tuple(target_graphs)
+            feed_dict = {
+                input_ph: input_graphs_tuple,
+                target_ph: target_graphs_tuple,
+            }
+            test_values = sess.run(
+                {
+                    "target": target_ph,
+                    "outputs": output_ops_ge,
+                },
+                feed_dict=feed_dict)
+            
+            correct_ge, solved_ge = existence_accuracy(
+                test_values["target"], test_values["outputs"][-1], use_edges=False)
+            
+            testing_info = 0, 0, 0, 0, [correct_ge], 0, [solved_ge]
+
+        return test_values, testing_info
