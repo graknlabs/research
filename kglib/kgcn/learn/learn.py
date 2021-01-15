@@ -30,10 +30,11 @@ class KGCNLearner:
     """
     Responsible for running a KGCN model
     """
-    def __init__(self, model, num_processing_steps_tr=10, num_processing_steps_ge=10):
+    def __init__(self, model, num_processing_steps_tr=10, num_processing_steps_ge=10, use_weighted=False):
         self._model = model
         self._num_processing_steps_tr = num_processing_steps_tr
         self._num_processing_steps_ge = num_processing_steps_ge
+        self.use_weighted = use_weighted
 
     def __call__(self,
                  tr_input_graphs,
@@ -50,6 +51,7 @@ class KGCNLearner:
             ge_graphs: In-memory graphs of Grakn concepts for generalisation
             num_processing_steps_tr: Number of processing (message-passing) steps for training.
             num_processing_steps_ge: Number of processing (message-passing) steps for generalization.
+            use_weighted: Boolean indicating if the loss should be weighted on the number of label prevalence (default: False)
             num_training_iterations: Number of training iterations
             log_every_seconds: The time to wait between logging and printing the next set of results.
             log_dir: Directory to store TensorFlow events files
@@ -67,13 +69,13 @@ class KGCNLearner:
         output_ops_ge = self._model(input_ph, self._num_processing_steps_ge)
 
         # Training loss.
-        loss_ops_tr = loss_ops_preexisting_no_penalty(target_ph, output_ops_tr)
+        loss_ops_tr = loss_ops_preexisting_no_penalty(target_ph, output_ops_tr, self.use_weighted)
         # Loss across processing steps.
         loss_op_tr = sum(loss_ops_tr) / self._num_processing_steps_tr
 
         tf.summary.scalar('loss_op_tr', loss_op_tr)
         # Test/generalization loss.
-        loss_ops_ge = loss_ops_preexisting_no_penalty(target_ph, output_ops_ge)
+        loss_ops_ge = loss_ops_preexisting_no_penalty(target_ph, output_ops_ge, self.use_weighted)
         loss_op_ge = loss_ops_ge[-1]  # Loss from final processing step.
         tf.summary.scalar('loss_op_ge', loss_op_ge)
 

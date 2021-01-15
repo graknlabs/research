@@ -21,24 +21,36 @@ import numpy as np
 import tensorflow as tf
 
 
-def loss_ops_from_difference(target_op, output_ops):
+def loss_ops_from_difference(target_op, output_ops, use_weighted=False):
     """
     Loss operation which directly compares the target with the output over all nodes and edges
     Args:
         target_op: The target of the model
         output_ops: A list of the outputs of the model, one for each message-passing step
+        use_weighted: Boolean indicating if the loss should be weighted on the number of label prevalence (default: False)
 
     Returns: The loss for each message-passing step
 
     """
-    loss_ops = [
-        tf.losses.softmax_cross_entropy(target_op.nodes, output_op.nodes)
-        for output_op in output_ops
-    ]
+    if use_weighted:
+        label_prevalence = tf.reduce_sum(target_op.nodes, axis=0)
+        class_weights = tf.expand_dims(1 / (label_prevalence + 1), axis=0)
+        # specify the weights for each sample in the batch (without having to compute the onehot label matrix)
+        weights = tf.reduce_sum(class_weights * target_op.nodes, axis=1)
+        loss_ops = [
+            tf.losses.softmax_cross_entropy(target_op.nodes, output_op.nodes, weights)
+            for output_op in output_ops
+        ]
+    else:
+        loss_ops = [
+            tf.losses.softmax_cross_entropy(target_op.nodes, output_op.nodes)
+            for output_op in output_ops
+        ]
+
     return loss_ops
 
 
-def loss_ops_preexisting_no_penalty(target_op, output_ops):
+def loss_ops_preexisting_no_penalty(target_op, output_ops, use_weighted=False):
     """
     Loss operation which doesn't penalise the output values for pre-existing nodes and edges, treating them as slack
     variables
@@ -46,6 +58,7 @@ def loss_ops_preexisting_no_penalty(target_op, output_ops):
     Args:
         target_op: The target of the model
         output_ops: A list of the outputs of the model, one for each message-passing step
+        use_weighted: Boolean indicating if the loss should be weighted on the number of label prevalence (default: False)
 
     Returns: The loss for each message-passing step
 
@@ -57,7 +70,15 @@ def loss_ops_preexisting_no_penalty(target_op, output_ops):
         target_nodes = tf.boolean_mask(target_op.nodes, node_mask_op)
         output_nodes = tf.boolean_mask(output_op.nodes, node_mask_op)
 
-        loss_op = tf.losses.softmax_cross_entropy(target_nodes, output_nodes)
+        if use_weighted:
+            label_prevalence = tf.reduce_sum(target_nodes, axis=0)
+            class_weights = tf.expand_dims(1 / (label_prevalence + 1), axis=0)
+            # specify the weights for each sample in the batch (without having to compute the onehot label matrix)
+            weights = tf.reduce_sum(class_weights * target_nodes, axis=1)
+            loss_op = tf.losses.softmax_cross_entropy(target_nodes, output_nodes, weights)
+        else:
+            loss_op = tf.losses.softmax_cross_entropy(target_nodes, output_nodes)
+
 
         loss_ops.append(loss_op)
 

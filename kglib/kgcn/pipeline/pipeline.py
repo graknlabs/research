@@ -44,7 +44,8 @@ def pipeline(graphs,
              attr_embedding_dim=6,
              edge_output_size=3,
              node_output_size=3,
-             output_dir=None):
+             output_dir=None,
+             use_weighted=False):
 
     ############################################################
     # Manipulate the graph data
@@ -83,7 +84,8 @@ def pipeline(graphs,
 
     learner = KGCNLearner(kgcn,
                           num_processing_steps_tr=num_processing_steps_tr,
-                          num_processing_steps_ge=num_processing_steps_ge)
+                          num_processing_steps_ge=num_processing_steps_ge,
+                          use_weighted=use_weighted)
 
     train_values, test_values, tr_info = learner(tr_input_graphs,
                                                  tr_target_graphs,
